@@ -89,9 +89,14 @@
       <!-- ライブカメラ用設定 -->
       <div id="live-panel" class="space-y-4">
         <div>
-          <label class="block text-zinc-400 font-medium mb-1">カメラ入力ソース</label>
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-zinc-400 font-medium">カメラ入力ソース</label>
+            <button id="start-cam-btn" class="text-[10px] bg-sky-500/20 text-sky-400 border border-sky-500/40 px-1.5 py-0.5 rounded hover:bg-sky-500/30">再取得</button>
+          </div>
           <div class="flex gap-2">
-            <select id="camera-select" class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-zinc-200 text-xs focus:outline-none focus:border-sky-500"></select>
+            <select id="camera-select" class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-zinc-200 text-xs focus:outline-none focus:border-sky-500">
+              <option value="">カメラを検出中...</option>
+            </select>
             <button id="switch-cam-btn" title="イン/アウト切替" class="px-2.5 py-1.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 rounded text-zinc-200">
               <i data-lucide="flip-horizontal" class="w-4 h-4"></i>
             </button>
@@ -179,7 +184,7 @@
     // DOM要素
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('slit-canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const guideLine = document.getElementById('guide-line');
     const slitPosSlider = document.getElementById('slit-pos');
     const slitPosLabel = document.getElementById('slit-pos-label');
@@ -188,13 +193,13 @@
     const directionSelect = document.getElementById('direction-select');
     const cameraSelect = document.getElementById('camera-select');
     const switchCamBtn = document.getElementById('switch-cam-btn');
+    const startCamBtn = document.getElementById('start-cam-btn');
     const pauseBtn = document.getElementById('pause-btn');
     const pauseText = document.getElementById('pause-text');
     const clearBtn = document.getElementById('clear-btn');
     const sliceCounter = document.getElementById('slice-counter');
     const averageColorBox = document.getElementById('average-color');
     const hexLabel = document.getElementById('hex-label');
-    const slitSpectrum = document.getElementById('slit-spectrum');
     const exportMenuBtn = document.getElementById('export-menu-btn');
     const exportMenu = document.getElementById('export-menu');
     const exportPngBtn = document.getElementById('export-png-btn');
@@ -217,7 +222,7 @@
     let currentMode = 'live';
     let sliceCount = 0;
     let currentDevices = [];
-    let currentDeviceIndex = 0;
+    let currentFacingMode = 'environment';
     let loadedImage = null;
     let animationFrameId = null;
 
@@ -236,51 +241,77 @@
     }
     initCanvas();
 
-    // カメラ起動
-    async function setupCamera(deviceId = null) {
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
-  }
-  
-  // 制約を緩めて確実にカメラを取得できるようにする
-  const constraints = {
-    video: deviceId 
-      ? { deviceId: { exact: deviceId } } 
-      : { facingMode: { ideal: 'environment' } }, // exactではなくidealにする
-    audio: false
-  };
+    // デバイス一覧取得
+    async function updateCameraList() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        currentDevices = devices.filter(d => d.kind === 'videoinput');
 
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject = stream;
-    await video.play();
-    updateGuide();
-    await enumerateCameras();
-  } catch (err) {
-    console.error('カメラアクセスエラー:', err);
-    // エラーが出た場合、制約なし（一番シンプルな指定）で再試行
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      video.srcObject = stream;
-      await video.play();
-      updateGuide();
-      await enumerateCameras();
-    } catch (fallbackErr) {
-      alert('カメラを起動できませんでした:\n' + fallbackErr.message + '\n\n※URLが「https://」で始まっているか、ブラウザのカメラ許可を確認してください。');
+        cameraSelect.innerHTML = '';
+        if (currentDevices.length === 0) {
+          const opt = document.createElement('option');
+          opt.text = 'カメラが見つかりません';
+          opt.value = '';
+          cameraSelect.appendChild(opt);
+          return;
+        }
+
+        currentDevices.forEach((device, index) => {
+          const opt = document.createElement('option');
+          opt.value = device.deviceId;
+          opt.text = device.label || `カメラ ${index + 1} (${device.deviceId.slice(0, 4)}...)`;
+          cameraSelect.appendChild(opt);
+        });
+
+        if (stream) {
+          const activeTrack = stream.getVideoTracks()[0];
+          if (activeTrack) {
+            const currentSetting = activeTrack.getSettings();
+            if (currentSetting.deviceId) {
+              cameraSelect.value = currentSetting.deviceId;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('デバイス列挙エラー:', err);
+      }
     }
-  }
-}
 
-    async function enumerateCameras() {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      currentDevices = devices.filter(d => d.kind === 'videoinput');
-      cameraSelect.innerHTML = '';
-      currentDevices.forEach((device, index) => {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.text = device.label || `カメラ ${index + 1}`;
-        cameraSelect.appendChild(option);
-      });
+    // カメラ起動処理（フォールバック付き）
+    async function setupCamera(deviceId = null) {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+
+      const constraints = {
+        audio: false,
+        video: deviceId 
+          ? { deviceId: { exact: deviceId } } 
+          : { facingMode: { ideal: currentFacingMode } }
+      };
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        console.warn('詳細条件での起動失敗。標準設定で再試行:', err);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (finalErr) {
+          console.error('カメラ起動完全失敗:', finalErr);
+          alert('カメラへのアクセスに失敗しました:\n[' + finalErr.name + '] ' + finalErr.message + 
+                '\n\n・アドレスが「https://」になっているか確認してください。\n・ブラウザのカメラ権限が「許可」になっているか確認してください。');
+          return;
+        }
+      }
+
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        video.play().catch(e => console.log('動画再生待機:', e));
+        updateGuide();
+      };
+
+      await updateCameraList();
     }
 
     function updateGuide() {
@@ -302,7 +333,7 @@
       }
     }
 
-    // スリット描画ループ
+    // メイン描画ループ
     function renderLoop() {
       if (currentMode === 'live' && !isPaused && video.readyState >= 2) {
         drawSlit(video);
@@ -322,25 +353,20 @@
 
       if (isVert) {
         const sx = Math.floor((sw - width) * posRatio);
-        // キャンバス全体を左にシフト
         ctx.drawImage(canvas, width, 0, canvas.width - width, canvas.height, 0, 0, canvas.width - width, canvas.height);
-        // 新しいスリットを右端に描画
         ctx.drawImage(source, sx, 0, width, sh, canvas.width - width, 0, width, canvas.height);
       } else {
         const sy = Math.floor((sh - width) * posRatio);
-        // キャンバス全体を上にシフト
         ctx.drawImage(canvas, 0, width, canvas.width, canvas.height - width, 0, 0, canvas.width, canvas.height - width);
-        // 新しいスリットを下端に描画
         ctx.drawImage(source, 0, sy, sw, width, 0, canvas.height - width, canvas.width, width);
       }
 
       sliceCount++;
       sliceCounter.textContent = sliceCount;
-      inspectColors(source, isVert, posRatio, width, sw, sh);
+      inspectColors(source, isVert, posRatio, sw, sh);
     }
 
-    function inspectColors(source, isVert, posRatio, width, sw, sh) {
-      // 簡易色解析（スリット中央の色を取得）
+    function inspectColors(source, isVert, posRatio, sw, sh) {
       const tempCanvas = document.createElement('canvas');
       const tempCtx = tempCanvas.getContext('2d');
       tempCanvas.width = 1;
@@ -357,7 +383,7 @@
       hexLabel.textContent = hex.toUpperCase();
     }
 
-    // 静止画モード走査
+    // 静止画モード処理
     function scanStaticImage() {
       if (!loadedImage) return;
       let pos = 0;
@@ -375,7 +401,6 @@
       stepScan();
     }
 
-    // 静止画一括バーコード化
     function makeBarcode() {
       if (!loadedImage) return;
       const isVert = directionSelect.value === 'vertical';
@@ -397,7 +422,7 @@
       }
     }
 
-    // イベントリスナー
+    // イベント設定
     slitPosSlider.addEventListener('input', updateGuide);
     slitWidthSlider.addEventListener('input', () => {
       widthLabel.textContent = `${slitWidthSlider.value}px`;
@@ -418,15 +443,24 @@
     });
 
     cameraSelect.addEventListener('change', (e) => {
-      setupCamera(e.target.value);
+      if (e.target.value) setupCamera(e.target.value);
+    });
+
+    startCamBtn.addEventListener('click', () => {
+      setupCamera();
     });
 
     switchCamBtn.addEventListener('click', () => {
-      if (currentDevices.length > 1) {
-        currentDeviceIndex = (currentDeviceIndex + 1) % currentDevices.length;
-        setupCamera(currentDevices[currentDeviceIndex].deviceId);
-      }
+      currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+      setupCamera();
     });
+
+    // ユーザーインタラクション時にカメラ未接続なら自動リトライ
+    window.addEventListener('click', () => {
+      if (!stream || stream.getVideoTracks().length === 0) {
+        setupCamera();
+      }
+    }, { once: true });
 
     // モード切り替え
     modeLiveBtn.addEventListener('click', () => {
@@ -449,7 +483,6 @@
       livePanel.classList.add('hidden');
     });
 
-    // 画像アップロード処理
     imageInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -485,7 +518,7 @@
     exportPngBtn.addEventListener('click', () => downloadImage('image/png', 'png'));
     exportJpegBtn.addEventListener('click', () => downloadImage('image/jpeg', 'jpg'));
 
-    // 録画（WebM）
+    // 録画機能
     recordBtn.addEventListener('click', () => {
       if (!isRecording) {
         startRecording();
@@ -526,7 +559,7 @@
       recordText.textContent = '動画録画';
     }
 
-    // 初期起動
+    // 初回起動
     setupCamera();
     renderLoop();
   </script>
