@@ -1,0 +1,19 @@
+{
+  "name": "Slitscan Studio",
+  "short_name": "Slitscan",
+  "description": "街中の色彩・時間をスリット状に採集するスリットスキャンカメラ",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%2309090b'/%3E%3Crect x='116' y='96' width='40' height='320' rx='8' fill='%2338bdf8' opacity='0.4'/%3E%3Crect x='188' y='96' width='40' height='320' rx='8' fill='%2338bdf8' opacity='0.7'/%3E%3Crect x='260' y='96' width='40' height='320' rx='8' fill='%2338bdf8'/%3E%3Crect x='332' y='96' width='40' height='320' rx='8' fill='%23f43f5e'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
