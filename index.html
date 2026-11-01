@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Slitscan Studio</title>
+
+  <!-- PWA 設定 -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#09090b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Slitscan">
+
+  <!-- 外部ライブラリ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/lucide.min.js"></script>
+
+  <style>
+    body {
+      background-color: #09090b;
+      color: #f4f4f5;
+      touch-action: manipulation;
+    }
+    .checkerboard {
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      background-image: 
+        linear-gradient(45deg, #18181b 25%, transparent 25%),
+        linear-gradient(-45deg, #18181b 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #18181b 75%),
+        linear-gradient(-45deg, transparent 75%, #18181b 75%);
+    }
+  </style>
+</head>
+<body class="flex flex-col h-screen overflow-hidden select-none font-sans">
+
+  <!-- ヘッダー -->
+  <header class="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800 shrink-0">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <i data-lucide="scan" class="w-5 h-5 text-sky-400"></i>
+        <h1 class="text-sm font-semibold tracking-wider uppercase text-zinc-100">Slitscan Studio</h1>
+      </div>
+      <div class="flex bg-zinc-800 p-0.5 rounded-lg border border-zinc-700/60 text-xs">
+        <button id="mode-live-btn" class="px-2.5 py-1 rounded-md bg-zinc-700 text-white font-medium transition">ライブカメラ</button>
+        <button id="mode-file-btn" class="px-2.5 py-1 rounded-md text-zinc-400 hover:text-white transition">静止画モード</button>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <!-- 録画ボタン -->
+      <button id="record-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-800 border border-zinc-700 hover:border-red-500/50 hover:bg-zinc-750 transition text-zinc-200">
+        <span id="record-indicator" class="w-2.5 h-2.5 rounded-full bg-zinc-500"></span>
+        <span id="record-text">動画録画</span>
+      </button>
+
+      <!-- 静止画書き出しドロップダウン -->
+      <div class="relative inline-block text-left">
+        <button id="export-menu-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-sky-500 hover:bg-sky-400 text-zinc-950 font-semibold transition">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          <span>書き出し</span>
+        </button>
+        <div id="export-menu" class="hidden absolute right-0 mt-1 w-32 bg-zinc-800 border border-zinc-700 rounded-md shadow-xl z-50 py-1 text-xs">
+          <button id="export-png-btn" class="w-full text-left px-3 py-1.5 hover:bg-zinc-700 text-zinc-200">PNG (高画質)</button>
+          <button id="export-jpeg-btn" class="w-full text-left px-3 py-1.5 hover:bg-zinc-700 text-zinc-200">JPEG (圧縮)</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- メインエリア -->
+  <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
+    <!-- スキャンキャンバスビューポート -->
+    <div class="flex-1 flex flex-col items-center justify-center relative bg-black/60 p-2 overflow-hidden">
+      <div class="relative w-full h-full flex items-center justify-center checkerboard rounded-lg overflow-hidden border border-zinc-800">
+        <canvas id="slit-canvas" class="max-w-full max-h-full shadow-2xl object-contain"></canvas>
+
+        <div class="absolute bottom-3 left-3 bg-zinc-900/80 backdrop-blur border border-zinc-700/60 rounded px-2.5 py-1 text-[11px] text-zinc-400 font-mono">
+          <span id="canvas-dim">1280 × 720</span> | スライス計: <span id="slice-counter">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- コントロールパネル -->
+    <aside class="w-full md:w-80 bg-zinc-900/90 border-t md:border-t-0 md:border-l border-zinc-800 p-4 flex flex-col gap-4 overflow-y-auto shrink-0 text-xs">
+      
+      <!-- ライブカメラ用設定 -->
+      <div id="live-panel" class="space-y-4">
+        <div>
+          <label class="block text-zinc-400 font-medium mb-1">カメラ入力ソース</label>
+          <div class="flex gap-2">
+            <select id="camera-select" class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-zinc-200 text-xs focus:outline-none focus:border-sky-500"></select>
+            <button id="switch-cam-btn" title="イン/アウト切替" class="px-2.5 py-1.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 rounded text-zinc-200">
+              <i data-lucide="flip-horizontal" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- プレビューとスリット位置調整 -->
+        <div>
+          <div class="flex justify-between text-zinc-400 mb-1">
+            <span>スリットガイド</span>
+            <span id="slit-pos-label" class="font-mono text-sky-400">50%</span>
+          </div>
+          <div class="relative w-full aspect-video bg-black rounded overflow-hidden border border-zinc-700">
+            <video id="webcam" autoplay playsinline muted class="w-full h-full object-contain"></video>
+            <div id="guide-line" class="absolute bg-sky-400 pointer-events-none transition-all"></div>
+          </div>
+          <input type="range" id="slit-pos" min="0" max="100" value="50" class="w-full mt-2 accent-sky-400">
+        </div>
+      </div>
+
+      <!-- 静止画用設定パネル -->
+      <div id="file-panel" class="hidden space-y-4">
+        <div>
+          <label class="block text-zinc-400 font-medium mb-1">画像ファイルをドロップ</label>
+          <input type="file" id="image-input" accept="image/*" class="w-full text-xs text-zinc-400 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-zinc-800 file:text-zinc-200 hover:file:bg-zinc-700">
+        </div>
+        <div class="flex gap-2">
+          <button id="scan-animate-btn" class="flex-1 py-1.5 bg-sky-500 hover:bg-sky-400 text-zinc-950 font-semibold rounded text-xs">端から走査</button>
+          <button id="barcode-btn" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 rounded text-xs">一括バーコード化</button>
+        </div>
+      </div>
+
+      <!-- 共通スリット設定 -->
+      <div class="pt-3 border-t border-zinc-800 space-y-3">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-zinc-400 mb-1">スリット方向</label>
+            <select id="direction-select" class="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-zinc-200">
+              <option value="vertical">垂直スリット (横流れ)</option>
+              <option value="horizontal">水平スリット (縦流れ)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-zinc-400 mb-1">スリット幅: <span id="width-label" class="text-sky-400 font-mono">1px</span></label>
+            <input type="range" id="slit-width" min="1" max="10" value="1" class="w-full accent-sky-400">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <button id="pause-btn" class="py-1.5 bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 rounded text-zinc-200 font-medium flex items-center justify-center gap-1.5">
+            <i data-lucide="pause" class="w-3.5 h-3.5"></i>
+            <span id="pause-text">一時停止</span>
+          </button>
+          <button id="clear-btn" class="py-1.5 bg-zinc-800 hover:bg-red-950/40 border border-zinc-700 hover:border-red-800/60 text-zinc-200 rounded font-medium flex items-center justify-center gap-1.5">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>クリア</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- リアルタイムカラーインスペクター -->
+      <div class="pt-3 border-t border-zinc-800">
+        <label class="block text-zinc-400 font-medium mb-1.5">最新スリットの色抽出</label>
+        <div id="slit-spectrum" class="w-full h-3 rounded border border-zinc-700 mb-2 overflow-hidden bg-black"></div>
+        <div class="flex items-center gap-2">
+          <div id="average-color" class="w-6 h-6 rounded border border-zinc-600 bg-transparent shrink-0"></div>
+          <div class="font-mono text-[11px] text-zinc-300" id="hex-label">#------</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // --- Service Worker 登録 ---
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then((reg) => console.log('ServiceWorker 登録成功:', reg.scope))
+          .catch((err) => console.log('ServiceWorker 登録失敗:', err));
+      });
+    }
+
+    lucide.createIcons();
+
+    // DOM要素
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('slit-canvas');
+    const ctx = canvas.getContext('2d');
+    const guideLine = document.getElementById('guide-line');
+    const slitPosSlider = document.getElementById('slit-pos');
+    const slitPosLabel = document.getElementById('slit-pos-label');
+    const slitWidthSlider = document.getElementById('slit-width');
+    const widthLabel = document.getElementById('width-label');
+    const directionSelect = document.getElementById('direction-select');
+    const cameraSelect = document.getElementById('camera-select');
+    const switchCamBtn = document.getElementById('switch-cam-btn');
+    const pauseBtn = document.getElementById('pause-btn');
+    const pauseText = document.getElementById('pause-text');
+    const clearBtn = document.getElementById('clear-btn');
+    const sliceCounter = document.getElementById('slice-counter');
+    const averageColorBox = document.getElementById('average-color');
+    const hexLabel = document.getElementById('hex-label');
+    const slitSpectrum = document.getElementById('slit-spectrum');
+    const exportMenuBtn = document.getElementById('export-menu-btn');
+    const exportMenu = document.getElementById('export-menu');
+    const exportPngBtn = document.getElementById('export-png-btn');
+    const exportJpegBtn = document.getElementById('export-jpeg-btn');
+    const recordBtn = document.getElementById('record-btn');
+    const recordIndicator = document.getElementById('record-indicator');
+    const recordText = document.getElementById('record-text');
+
+    const modeLiveBtn = document.getElementById('mode-live-btn');
+    const modeFileBtn = document.getElementById('mode-file-btn');
+    const livePanel = document.getElementById('live-panel');
+    const filePanel = document.getElementById('file-panel');
+    const imageInput = document.getElementById('image-input');
+    const scanAnimateBtn = document.getElementById('scan-animate-btn');
+    const barcodeBtn = document.getElementById('barcode-btn');
+
+    // 状態変数
+    let stream = null;
+    let isPaused = false;
+    let currentMode = 'live';
+    let sliceCount = 0;
+    let currentDevices = [];
+    let currentDeviceIndex = 0;
+    let loadedImage = null;
+    let animationFrameId = null;
+
+    // 録画関連
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecording = false;
+
+    // キャンバス初期化
+    function initCanvas(w = 1280, h = 720) {
+      canvas.width = w;
+      canvas.height = h;
+      document.getElementById('canvas-dim').textContent = `${w} × ${h}`;
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(0, 0, w, h);
+    }
+    initCanvas();
+
+    // カメラ起動
+    async function setupCamera(deviceId = null) {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+      const constraints = {
+        video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' },
+        audio: false
+      };
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        await video.play();
+        updateGuide();
+        await enumerateCameras();
+      } catch (err) {
+        console.error('カメラアクセスエラー:', err);
+      }
+    }
+
+    async function enumerateCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      currentDevices = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+      currentDevices.forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.text = device.label || `カメラ ${index + 1}`;
+        cameraSelect.appendChild(option);
+      });
+    }
+
+    function updateGuide() {
+      const pos = slitPosSlider.value;
+      slitPosLabel.textContent = `${pos}%`;
+      const isVert = directionSelect.value === 'vertical';
+      if (isVert) {
+        guideLine.style.top = '0';
+        guideLine.style.bottom = '0';
+        guideLine.style.height = '100%';
+        guideLine.style.left = `${pos}%`;
+        guideLine.style.width = '2px';
+      } else {
+        guideLine.style.left = '0';
+        guideLine.style.right = '0';
+        guideLine.style.width = '100%';
+        guideLine.style.top = `${pos}%`;
+        guideLine.style.height = '2px';
+      }
+    }
+
+    // スリット描画ループ
+    function renderLoop() {
+      if (currentMode === 'live' && !isPaused && video.readyState >= 2) {
+        drawSlit(video);
+      }
+      requestAnimationFrame(renderLoop);
+    }
+
+    function drawSlit(source, customPos = null) {
+      const isVert = directionSelect.value === 'vertical';
+      const width = parseInt(slitWidthSlider.value);
+      const posRatio = (customPos !== null ? customPos : parseInt(slitPosSlider.value)) / 100;
+
+      const sw = source.videoWidth || source.width;
+      const sh = source.videoHeight || source.height;
+
+      if (!sw || !sh) return;
+
+      if (isVert) {
+        const sx = Math.floor((sw - width) * posRatio);
+        // キャンバス全体を左にシフト
+        ctx.drawImage(canvas, width, 0, canvas.width - width, canvas.height, 0, 0, canvas.width - width, canvas.height);
+        // 新しいスリットを右端に描画
+        ctx.drawImage(source, sx, 0, width, sh, canvas.width - width, 0, width, canvas.height);
+      } else {
+        const sy = Math.floor((sh - width) * posRatio);
+        // キャンバス全体を上にシフト
+        ctx.drawImage(canvas, 0, width, canvas.width, canvas.height - width, 0, 0, canvas.width, canvas.height - width);
+        // 新しいスリットを下端に描画
+        ctx.drawImage(source, 0, sy, sw, width, 0, canvas.height - width, canvas.width, width);
+      }
+
+      sliceCount++;
+      sliceCounter.textContent = sliceCount;
+      inspectColors(source, isVert, posRatio, width, sw, sh);
+    }
+
+    function inspectColors(source, isVert, posRatio, width, sw, sh) {
+      // 簡易色解析（スリット中央の色を取得）
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCanvas.width = 1;
+      tempCanvas.height = 1;
+
+      const sx = isVert ? Math.floor(sw * posRatio) : Math.floor(sw / 2);
+      const sy = isVert ? Math.floor(sh / 2) : Math.floor(sh * posRatio);
+
+      tempCtx.drawImage(source, sx, sy, 1, 1, 0, 0, 1, 1);
+      const pixel = tempCtx.getImageData(0, 0, 1, 1).data;
+      const hex = `#${((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1)}`;
+
+      averageColorBox.style.backgroundColor = hex;
+      hexLabel.textContent = hex.toUpperCase();
+    }
+
+    // 静止画モード走査
+    function scanStaticImage() {
+      if (!loadedImage) return;
+      let pos = 0;
+      const step = 0.5;
+
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+
+      function stepScan() {
+        if (pos <= 100) {
+          drawSlit(loadedImage, pos);
+          pos += step;
+          animationFrameId = requestAnimationFrame(stepScan);
+        }
+      }
+      stepScan();
+    }
+
+    // 静止画一括バーコード化
+    function makeBarcode() {
+      if (!loadedImage) return;
+      const isVert = directionSelect.value === 'vertical';
+      const steps = isVert ? canvas.width : canvas.height;
+      const sw = loadedImage.width;
+      const sh = loadedImage.height;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (let i = 0; i < steps; i++) {
+        const ratio = i / steps;
+        if (isVert) {
+          const sx = Math.floor(sw * ratio);
+          ctx.drawImage(loadedImage, sx, 0, 1, sh, i, 0, 1, canvas.height);
+        } else {
+          const sy = Math.floor(sh * ratio);
+          ctx.drawImage(loadedImage, 0, sy, sw, 1, 0, i, canvas.width, 1);
+        }
+      }
+    }
+
+    // イベントリスナー
+    slitPosSlider.addEventListener('input', updateGuide);
+    slitWidthSlider.addEventListener('input', () => {
+      widthLabel.textContent = `${slitWidthSlider.value}px`;
+    });
+    directionSelect.addEventListener('change', updateGuide);
+
+    pauseBtn.addEventListener('click', () => {
+      isPaused = !isPaused;
+      pauseText.textContent = isPaused ? '再開' : '一時停止';
+      pauseBtn.classList.toggle('text-sky-400', isPaused);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      sliceCount = 0;
+      sliceCounter.textContent = '0';
+    });
+
+    cameraSelect.addEventListener('change', (e) => {
+      setupCamera(e.target.value);
+    });
+
+    switchCamBtn.addEventListener('click', () => {
+      if (currentDevices.length > 1) {
+        currentDeviceIndex = (currentDeviceIndex + 1) % currentDevices.length;
+        setupCamera(currentDevices[currentDeviceIndex].deviceId);
+      }
+    });
+
+    // モード切り替え
+    modeLiveBtn.addEventListener('click', () => {
+      currentMode = 'live';
+      modeLiveBtn.classList.add('bg-zinc-700', 'text-white');
+      modeLiveBtn.classList.remove('text-zinc-400');
+      modeFileBtn.classList.remove('bg-zinc-700', 'text-white');
+      modeFileBtn.classList.add('text-zinc-400');
+      livePanel.classList.remove('hidden');
+      filePanel.classList.add('hidden');
+    });
+
+    modeFileBtn.addEventListener('click', () => {
+      currentMode = 'file';
+      modeFileBtn.classList.add('bg-zinc-700', 'text-white');
+      modeFileBtn.classList.remove('text-zinc-400');
+      modeLiveBtn.classList.remove('bg-zinc-700', 'text-white');
+      modeLiveBtn.classList.add('text-zinc-400');
+      filePanel.classList.remove('hidden');
+      livePanel.classList.add('hidden');
+    });
+
+    // 画像アップロード処理
+    imageInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => {
+            loadedImage = img;
+            initCanvas(img.width, img.height);
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    scanAnimateBtn.addEventListener('click', scanStaticImage);
+    barcodeBtn.addEventListener('click', makeBarcode);
+
+    // 書き出し
+    exportMenuBtn.addEventListener('click', () => {
+      exportMenu.classList.toggle('hidden');
+    });
+
+    function downloadImage(format = 'image/png', ext = 'png') {
+      const link = document.createElement('a');
+      link.download = `slitscan-${Date.now()}.${ext}`;
+      link.href = canvas.toDataURL(format, 0.95);
+      link.click();
+      exportMenu.classList.add('hidden');
+    }
+
+    exportPngBtn.addEventListener('click', () => downloadImage('image/png', 'png'));
+    exportJpegBtn.addEventListener('click', () => downloadImage('image/jpeg', 'jpg'));
+
+    // 録画（WebM）
+    recordBtn.addEventListener('click', () => {
+      if (!isRecording) {
+        startRecording();
+      } else {
+        stopRecording();
+      }
+    });
+
+    function startRecording() {
+      recordedChunks = [];
+      const stream = canvas.captureStream(30);
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `slitscan-video-${Date.now()}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      mediaRecorder.start();
+      isRecording = true;
+      recordIndicator.classList.replace('bg-zinc-500', 'bg-red-500');
+      recordText.textContent = '停止 & 保存';
+    }
+
+    function stopRecording() {
+      mediaRecorder.stop();
+      isRecording = false;
+      recordIndicator.classList.replace('bg-red-500', 'bg-zinc-500');
+      recordText.textContent = '動画録画';
+    }
+
+    // 初期起動
+    setupCamera();
+    renderLoop();
+  </script>
+</body>
+</html>
