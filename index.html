@@ -238,23 +238,38 @@
 
     // カメラ起動
     async function setupCamera(deviceId = null) {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-      }
-      const constraints = {
-        video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' },
-        audio: false
-      };
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream;
-        await video.play();
-        updateGuide();
-        await enumerateCameras();
-      } catch (err) {
-        console.error('カメラアクセスエラー:', err);
-      }
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+  }
+  
+  // 制約を緩めて確実にカメラを取得できるようにする
+  const constraints = {
+    video: deviceId 
+      ? { deviceId: { exact: deviceId } } 
+      : { facingMode: { ideal: 'environment' } }, // exactではなくidealにする
+    audio: false
+  };
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    await video.play();
+    updateGuide();
+    await enumerateCameras();
+  } catch (err) {
+    console.error('カメラアクセスエラー:', err);
+    // エラーが出た場合、制約なし（一番シンプルな指定）で再試行
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      video.srcObject = stream;
+      await video.play();
+      updateGuide();
+      await enumerateCameras();
+    } catch (fallbackErr) {
+      alert('カメラを起動できませんでした:\n' + fallbackErr.message + '\n\n※URLが「https://」で始まっているか、ブラウザのカメラ許可を確認してください。');
     }
+  }
+}
 
     async function enumerateCameras() {
       const devices = await navigator.mediaDevices.enumerateDevices();
